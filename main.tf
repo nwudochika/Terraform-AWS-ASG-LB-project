@@ -1,0 +1,221 @@
+# VPC, subnets, route table, internet gateway
+
+resource "aws_vpc" "main" {
+  cidr_block       = "10.0.0.0/16"
+  instance_tenancy = "default"
+
+  tags = {
+    Name = "main"
+  }
+}
+
+resource "aws_subnet" "public1" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone = "us-east-1a"
+
+  tags = {
+    Name = "public1"
+  }
+}
+
+resource "aws_subnet" "public2" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.2.0/24"
+  map_public_ip_on_launch = true
+  availability_zone = "us-east-1b"
+
+  tags = {
+    Name = "public2"
+  }
+}
+
+resource "aws_subnet" "private1" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.3.0/24"
+  availability_zone = "us-east-1c"
+
+  tags = {
+    Name = "private1"
+  }
+}
+
+resource "aws_subnet" "private2" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.4.0/24"
+  availability_zone = "us-east-1d"
+
+  tags = {
+    Name = "private2"
+  }
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "main"
+  }
+}
+
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_route_table_association" "a1" {
+  subnet_id      = aws_subnet.public1.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "a2" {
+  subnet_id      = aws_subnet.public2.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+
+# ALB Security Group
+resource "aws_security_group" "alb_sg" {
+  vpc_id = aws_vpc.main.id
+  name        = "alb-sg"
+  description = "Security group for public ALB"
+
+  ingress {
+    description = "Allow HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # Public allowed
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# EC2 security group
+resource "aws_security_group" "ec2_sg" {
+  vpc_id = aws_vpc.main.id
+  name        = "ec2-sg"
+  description = "Security group for webserver"
+
+  ingress {
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id] 
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# ALB Target group
+resource "aws_lb_target_group" "tg" {
+  name        = "tf-lb-tg"
+  target_type = "instance"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+}
+
+# Load Balancer
+resource "aws_lb" "alb" {
+  name               = "lb-tf"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
+  enable_deletion_protection = false
+}
+
+# HTTPS Listener
+resource "aws_lb_listener" "https_listener" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08" 
+  certificate_arn   = "arn:aws:acm:us-east-1:317767385440:certificate/0ce9e7a7-beb3-4996-a0f2-21bc62a4c7a6"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tg.arn 
+  }
+}
+
+# Route Domain to ALB
+    resource "aws_route53_record" "www" {
+      zone_id = "Z01889241YTGNMPE1L5IH"
+      name    = "www.fcjnwudo.com" # Or "example.com" for the root domain
+      type    = "A"
+
+      alias {
+        name                   = aws_lb.alb.dns_name
+        zone_id                = aws_lb.alb.zone_id
+        evaluate_target_health = true
+      }
+    }
+
+
+# Launch Template
+resource "aws_launch_template" "ec2_launchtemplate" {
+  name_prefix   = "ec2-launchtemplate"
+  image_id      = "ami-0fa3fe0fa7920f68e"
+  instance_type = "t2.micro"
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+  user_data = base64encode(<<EOF
+#!/bin/bash
+yum update -y
+yum install -y httpd
+systemctl start httpd
+systemctl enable httpd
+echo "<h1>Welcome to my web server!</h1>" > /var/www/html/index.html
+EOF
+)
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "ASG-Web-Server"
+    }
+  }
+}
+
+# Autoscaling Group
+resource "aws_autoscaling_group" "asg" {
+  name               = "asg-terraform"
+  max_size           = 3
+  min_size           = 2
+  desired_capacity   = 2
+  target_group_arns = [aws_lb_target_group.tg.arn]
+
+
+  vpc_zone_identifier = [
+    aws_subnet.public1.id,
+    aws_subnet.public2.id
+  ]
+
+  launch_template {
+    id      = aws_launch_template.ec2_launchtemplate.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "ASG-Instances"
+    propagate_at_launch = true
+  }
+}
+
