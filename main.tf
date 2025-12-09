@@ -78,7 +78,6 @@ resource "aws_route_table_association" "a2" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-
 # ALB Security Group
 resource "aws_security_group" "alb_sg" {
   vpc_id = aws_vpc.main.id
@@ -147,7 +146,7 @@ resource "aws_lb_listener" "https_listener" {
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-2016-08" 
-  certificate_arn   = "arn:aws:acm:us-east-1:317767385440:certificate/0ce9e7a7-beb3-4996-a0f2-21bc62a4c7a6"
+  certificate_arn   = var.certificate_arn
 
   default_action {
     type             = "forward"
@@ -156,24 +155,44 @@ resource "aws_lb_listener" "https_listener" {
 }
 
 # Route Domain to ALB
-    resource "aws_route53_record" "www" {
-      zone_id = "Z01889241YTGNMPE1L5IH"
-      name    = "www.fcjnwudo.com" # Or "example.com" for the root domain
-      type    = "A"
+resource "aws_route53_record" "www" {
+    zone_id = var.zone_id
+    name    = "www.fcjnwudo.com" 
+    type    = "A"
 
-      alias {
-        name                   = aws_lb.alb.dns_name
-        zone_id                = aws_lb.alb.zone_id
-        evaluate_target_health = true
-      }
+    alias {
+    name                   = aws_lb.alb.dns_name
+    zone_id                = aws_lb.alb.zone_id
+    evaluate_target_health = true
     }
+}
 
+# Data Source AMI
+data "aws_ami" "amazon_linux_latest" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+}
 
 # Launch Template
 resource "aws_launch_template" "ec2_launchtemplate" {
   name_prefix   = "ec2-launchtemplate"
-  image_id      = "ami-0fa3fe0fa7920f68e"
-  instance_type = "t2.micro"
+  image_id      = data.aws_ami.amazon_linux_latest.id
+  instance_type = var.instance_type
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   user_data = base64encode(<<EOF
 #!/bin/bash
@@ -181,7 +200,7 @@ yum update -y
 yum install -y httpd
 systemctl start httpd
 systemctl enable httpd
-echo "<h1>Welcome to my web server!</h1>" > /var/www/html/index.html
+echo "<h1>Welcome to Fidelis Nwudo web server deployed with Terraform!</h1>" > /var/www/html/index.html
 EOF
 )
 
@@ -218,4 +237,3 @@ resource "aws_autoscaling_group" "asg" {
     propagate_at_launch = true
   }
 }
-
