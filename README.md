@@ -37,3 +37,23 @@ The infrastructure deployed includes:
 ## DNS
 - Route53 A Record
 - ALB alias mapping
+
+## Storage (Remote State)
+- S3 backend (store .tfstate)
+
+# How to Deploy
+## Initialize Terraform
+terraform init
+
+## Validate configuration
+terraform validate
+
+## Preview changes
+terraform plan
+
+## Apply configuration
+terraform apply
+
+
+## Fully working HTTPS website
+![WEBSITE IMAGE](./images/Website.png)
