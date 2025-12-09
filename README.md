@@ -4,6 +4,8 @@ This project provisions a fully functional, scalable AWS web infrastructure usin
 
 # Architecture Overview
 
+![WEBSITE IMAGE](./images/Terraform%20Architecture.png)
+
 The infrastructure deployed includes:
 
 ## Networking
